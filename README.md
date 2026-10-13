@@ -68,23 +68,36 @@ Known gaps:
   measured. There are no negative examples in the model yet.
 - Single microphone channel only.
 
-## Install (Arch Linux)
+## Install
 
-`python-sounddevice` is not in the official repos, so use a virtual
-environment:
+Works on any Linux distribution with PipeWire or PulseAudio. The installer
+supports Arch, Debian/Ubuntu and Fedora out of the box:
 
 ```bash
-sudo pacman -S python python-numpy python-cffi portaudio pipewire-alsa
 git clone https://github.com/AYX71/holo-linux.git
 cd holo-linux
-python -m venv --system-site-packages ~/.venv
-source ~/.venv/bin/activate
-pip install sounddevice
+./install.sh
 ```
 
-On other distros, install PortAudio and run `pip install numpy sounddevice`.
+It installs the system packages, creates a virtual environment inside the
+project folder, and adds a `holo` command to `~/.local/bin`.
+
+On other distributions, install Python 3, PortAudio and `notify-send` with your
+package manager, then:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python holo.py devices
+```
 
 ## Usage
+
+After running the installer, `holo` is a shortcut for `python holo.py`: for
+example `holo calibrate`, `holo eval`, and plain `holo` to run. If you did not
+use the installer, replace `holo` with `python holo.py` inside the virtual
+environment. Try it without `--device` first, which uses the system default
+input.
 
 ```bash
 python holo.py devices                 # list audio devices
@@ -134,15 +147,6 @@ fi
 
 Make it executable with `chmod +x`, and `mkdir -p ~/Pictures/Screenshots`.
 Other tools: `grim` (Wayland), `gnome-screenshot`, `maim` or `scrot` (X11).
-
-**Optional launcher** (`~/.local/bin/holo`), so you don't need to activate the
-virtual environment by hand:
-
-```sh
-#!/bin/sh
-cd "$HOME/holo-linux" || exit 1
-exec "$HOME/.venv/bin/python" holo.py "${@:-run}" --device 11
-```
 
 ## Tuning
 
