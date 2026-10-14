@@ -18,15 +18,18 @@ was written from that project's public description of the pipeline.
 - Four zones: `left_rear`, `right_rear`, `left_front`, `right_front`
 - Runs entirely locally: no network, no cloud, audio is never saved
 - One Python file (`holo.py`), two dependencies (`numpy`, `sounddevice`)
+- Optional background class: record typing, talking, and touches once so they
+  are ignored instead of firing an action
+- Optional, experimental stereo cues if your microphone really is stereo
+- Runs at login as a systemd user service, or from a tray icon with the GUI
+- A Qt graphical interface: pick the microphone, calibrate with a picture of
+  the four zones, watch taps light up live, and choose what each zone does
 - Each zone can run any shell command: screenshots, notifications, opening
   apps, copying text, and so on
 
 ## How it works
 
-```
-mic stream -> onset detector -> 90 ms window -> clip / sustained-sound gate
-           -> features -> ridge classifier + novelty check -> action
-```
+![Pipeline: microphone, onset detector, 90 ms window and gate, features, classifier, action](docs/pipeline.svg)
 
 1. **Onset detection.** An adaptive noise floor is learned from the room. A
    block that is clearly louder than the floor starts a capture, with a short
@@ -60,13 +63,20 @@ PipeWire, with 10-15 taps per zone per run:
 use). The other zones, especially on the left, were less consistent between
 runs. Results vary a lot between runs, so don't read much into any single one.
 
+These numbers were measured **before** the background class and stereo cues
+were added, so they do not describe those features. A later 40-tap run on the
+same code with no background class gave 78% (three zones 80-100%, `right_front`
+40%, all misses rejections rather than wrong zones).
+
 Known gaps:
 
 - The leave-one-out score printed during calibration is always about 100% and
   does not predict real accuracy. Only `eval` is a real test.
-- False triggers from typing, talking, or touching the laptop have not been
-  measured. There are no negative examples in the model yet.
-- Single microphone channel only.
+- The background class and stereo cues are tested on synthetic audio only
+  (`python -m unittest discover -s tests`). Real-world effect is unmeasured:
+  after adding background sounds, run `eval` and check real taps are still
+  recognized, because a background class can also reject genuine taps.
+- Stereo only helps if the microphone really delivers two different channels.
 
 ## Install
 
@@ -91,6 +101,31 @@ python3 -m venv .venv
 .venv/bin/python holo.py devices
 ```
 
+## Graphical interface
+
+```bash
+./install-gui.sh                 # installs PySide6 and an app-menu entry
+.venv/bin/python holo_gui.py     # or open "Holo" from your application menu
+```
+
+If you use a different virtual environment, pass its Python:
+`./install-gui.sh ~/.venv/bin/python`. On Arch you can instead run
+`sudo pacman -S pyside6` and start `python holo_gui.py` from a venv that was
+created with `--system-site-packages`.
+
+The window has four tabs: **Live** (tap and see which zone lights up, with its
+score), **Calibrate** (guided, one zone at a time), **Actions** (choose what
+each zone does from presets such as screenshots, or type your own command) and
+**Settings** (start at login in the tray). It reads and writes the same profile
+and actions files as the command-line version.
+
+Stop any other Holo process first (the `holo` command or the systemd service):
+two programs cannot share the microphone cleanly.
+
+The GUI is new. Its logic is covered by tests, but how it looks and behaves in
+a real Qt session has had little testing. If it misbehaves, the command-line
+version keeps working unchanged.
+
 ## Usage
 
 After running the installer, `holo` is a shortcut for `python holo.py`: for
@@ -106,6 +141,8 @@ python holo.py eval      --device N    # 40 fresh taps, shows accuracy
 python holo.py run       --device N    # listen and run actions
 ```
 
+Instead of `--device N` every time, you can set `export HOLO_DEVICE=N`.
+
 Use a PipeWire or `default` input device (not a raw `hw:` device, which is
 often busy) and check that it points at the built-in microphone with
 `wpctl status`. Turn off any mic gain boost or auto-gain.
@@ -118,6 +155,50 @@ often busy) and check that it points at the built-in microphone with
   little. Ten identical taps make a profile that rejects real ones.
 - Tap firmly and consistently, with a fingertip or knuckle, and pause between
   taps.
+
+### Reducing false triggers
+
+Calibration can optionally record 30 seconds of background sounds (the default
+is no): type, talk, click the trackpad lightly, put things down on the desk,
+but do not move the laptop and do not tap the zones. Holo
+learns these as a "none" class and ignores similar sounds later. You can add
+more at any time without redoing the taps (needs a profile made with this
+version):
+
+```bash
+holo negatives
+holo eval        # confirm real taps are still recognized
+```
+
+If `eval` shows many real taps now rejected as `background sound`, record
+fewer or more varied background sounds, or recalibrate and skip that step.
+
+### Stereo (experimental)
+
+Some laptops expose two microphones as two channels. Check yours:
+
+```bash
+holo stereo-check
+```
+
+If it says the channels differ, calibrate with `holo calibrate --channels 2`.
+This adds left/right level differences and the inter-channel delay as features,
+which may help separate left from right. If it says the channels are identical,
+skip this.
+
+### Run at login
+
+```bash
+./install-service.sh        # or ./install-service.sh 11 to pin a device number
+systemctl --user status holo
+journalctl --user -u holo -f
+```
+
+This needs systemd and a desktop that starts `graphical-session.target` (KDE
+Plasma and GNOME do). If actions such as screenshots work in a terminal but not
+from the service, the service may be missing your session's display variables.
+Check `systemctl --user show-environment`. Run `systemctl --user stop holo`
+before calibrating, since two programs cannot share the microphone cleanly.
 
 ## Actions
 
@@ -165,22 +246,26 @@ Constants at the top of `holo.py`:
 
 - **`ModuleNotFoundError: No module named 'sounddevice'`**: the virtual
   environment is not active. Run `source ~/.venv/bin/activate`.
+- **The GUI says it could not open the microphone**: another program is using
+  it, or the chosen device is wrong. Try another entry in the Microphone list.
 - **Nothing is detected**: check the default input with `wpctl status`, and
   that the mic is not muted.
 - **Many `rejected: low confidence` lines**: recalibrate with more varied taps.
+- **Many `rejected: background sound` lines on real taps**: the background class
+  is too broad. Recalibrate and skip the background step, or record more
+  varied background sounds.
 - **No screenshot appears**: run your action script by hand first. On KDE
   Wayland, approve the screen-capture permission prompt once.
 
 ## Roadmap
 
-- A "none" class trained on typing, speech, and touches, to reduce false
-  triggers
-- Stereo features if the microphone is stereo
+- Measure the background class and stereo cues on real hardware
+- Check and polish the GUI on real desktops (KDE, GNOME)
 - The active ultrasonic probe from the original project
-- A systemd user service
+- Per-zone cooldowns and actions configurable from the config file
 
 ## Credits and license
 
 Concept and pipeline description from
-[JustinGamer191/Holo](https://github.com/JustinGamer191/Holo). Add a license
-file of your choice (for example MIT) before publishing.
+[JustinGamer191/Holo](https://github.com/JustinGamer191/Holo). Released under
+the MIT license (see `LICENSE`).
